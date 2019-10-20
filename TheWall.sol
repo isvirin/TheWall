@@ -176,6 +176,9 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     event ClusterCreated(uint indexed tokenId, string title);
     event ClusterRemoved(uint indexed tokenId);
 
+    event AreaAddedToCluster(uint indexed areaTokenId, uint indexed clusterTokenId, uint256 revision);
+    event AreaRemovedFromCluster(uint indexed areaTokenId, uint indexed clusterTokenId, uint256 revision);
+
     event AreaImageChanged(uint indexed tokenId, byte[300] image);
     event ItemLinkChanged(uint indexed tokenId, string link);
     event ItemTagsChanged(uint indexed tokenId, string tags);
@@ -409,10 +412,10 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         emit AreaCreated(tokenId, me, x, y, p, area.premium);
     }
 
-    function createCluster(uint256 x, uint256 y, uint256 width, uint256 height, uint8 p, address payable referrerCandidate) public payable returns (uint256)
-    {
+    //function createCluster(uint256 x, uint256 y, uint256 width, uint256 height, uint8 p, address payable referrerCandidate) public payable returns (uint256)
+    //{
         // TODO: implement me
-    }
+    //}
     
     function buy(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
@@ -509,7 +512,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         Token storage token = _tokens[tokenId];
         require(token.tt != TokenType.Unknown, "TheWall: No token found");
         require(token.landlord == _msgSender(), "TheWall: Only landlord can finish rent");
-        require(token.status == Status.Rented && token.rentDuration < now, "TheWall: item is not rented");
+        require(token.status == Status.Rented && token.rentDuration > now, "TheWall: item is not rented");
         token.status = Status.None;
         token.rentDuration = 0;
         token.cost = 0;
@@ -519,31 +522,65 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     
     function addToCluster(uint256 areaId, uint256 clusterId) public
     {
-        // есть ли такой кластер
-        // есть ли такая область
-        // не находятся ли они в аренде
-        // принадлежат ли они одному владельцу
-        // не принадлежит ли эта область другому кластеру?
+        require(ownerOf(areaId) == ownerOf(clusterId), "TheWall: Area and Cluster have different owners");
+        require(ownerOf(areaId) == _msgSender(), "TheWall: Can be called from owner only");
+        Token storage areaToken = _tokens[areaId];
+        Token storage clusterToken = _tokens[clusterId];
+        require(areaToken.tt == TokenType.Area, "TheWall: Area not found");
+        require(clusterToken.tt == TokenType.Cluster, "TheWall: Cluster not found");
+        require(areaToken.status != Status.Rented || areaToken.rentDuration < now, "TheWall: Area is rented");
+        require(clusterToken.status != Status.Rented || clusterToken.rentDuration < now, "TheWall: Cluster is rented");
 
-        // меняем область - не забываем увеличивать revision
-        // меняем кластер
+        Area storage area = _areas[areaId];
+        require(area.cluster == 0, "TheWall: Area already in cluster");
+        area.cluster = clusterId;
+        
+        Cluster storage cluster = _clusters[clusterId];
+        cluster.revision += 1;
+        cluster.areas.push(areaId);
+        
+        emit AreaAddedToCluster(areaId, clusterId, cluster.revision);
     }
 
     function removeFromCluster(uint256 areaId, uint256 clusterId) public
     {
-        // есть ли такой кластер
-        // есть ли такая область внутри этого кластера
-        // не находятся ли они в аренде
+        require(ownerOf(areaId) == ownerOf(clusterId), "TheWall: Area and Cluster have different owners");
+        require(ownerOf(areaId) == _msgSender(), "TheWall: Can be called from owner only");
+        Token storage areaToken = _tokens[areaId];
+        Token storage clusterToken = _tokens[clusterId];
+        require(areaToken.tt == TokenType.Area, "TheWall: Area not found");
+        require(clusterToken.tt == TokenType.Cluster, "TheWall: Cluster not found");
+        require(clusterToken.status != Status.Rented || clusterToken.rentDuration < now, "TheWall: Cluster is rented");
 
-        // меняем область - не забываем увеличивать revision
-        // меняем кластер
+        Area storage area = _areas[areaId];
+        require(area.cluster == clusterId, "TheWall: Area is not in cluster");
+        area.cluster = 0;
+
+        Cluster storage cluster = _clusters[clusterId];
+        cluster.revision += 1;
+        uint index = 0;
+        for(uint i = 0; i < cluster.areas.length; ++i)
+        {
+            if (cluster.areas[i] == areaId)
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index != cluster.areas.length - 1)
+        {
+            cluster.areas[index] = cluster.areas[cluster.areas.length - 1];
+        }
+        cluster.areas.length--;
+
+        emit AreaRemovedFromCluster(areaId, clusterId, cluster.revision);
     }
 
     function _canBeManaged(address who, uint256 tokenId) internal returns (TokenType)
     {
         Token storage token = _tokens[tokenId];
         require(token.tt != TokenType.Unknown, "TheWall: No token found");
-        if (token.status == Status.Rented && token.rentDuration < now)
+        if (token.status == Status.Rented && token.rentDuration > now)
         {
             require(who == token.landlord, "TheWall: Rented token can be managed by landlord only");
         }
