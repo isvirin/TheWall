@@ -364,6 +364,15 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         _burn(tokenId);
         emit ClusterRemoved(tokenId);
     }
+    
+    uint256 constant private FACTOR =  1157920892373161954235709850086879078532699846656405640394575840079131296399;
+    function _rand(uint max) pure private returns (uint256)
+    {
+        uint256 factor = FACTOR * 100 / max;
+        uint256 lastBlockNumber = block.number - 1;
+        uint256 hashVal = uint256(block.blockhash(lastBlockNumber));
+        return uint256((uint256(hashVal) / factor)) % max;
+    }
 
     function create(uint256 x, uint256 y, uint8 p, address payable referrerCandidate) public payable returns (uint256)
     {
@@ -400,13 +409,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         area.x = x;
         area.y = y;
         area.p = p;
-        // TODO! implement random generator
-//        uint256 sum = 0;
-//        for(uint i=0; i<block.blockhash.length; i=i.add(1))
-//        {
-//            sum = sum.add(uint256(block.blockhash[i]));
-//        }
-//        area.premium = (sum % 1000 == 0);
+        area.premium = (_rand(1000) % 1000 == 0);
         area.premium = false;
 
         emit AreaCreated(tokenId, me, x, y, p, area.premium);
