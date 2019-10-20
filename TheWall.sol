@@ -173,7 +173,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     event AreaCostChanged(uint256 costWei);
 
     event AreaCreated(uint256 indexed tokenId, address indexed owner, uint256 x, uint256 y, uint8 p, bool premium);
-    event ClusterCreated(uint indexed tokenId, string title);
+    event ClusterCreated(uint indexed tokenId, address indexed owner, string title);
     event ClusterRemoved(uint indexed tokenId);
 
     event AreaAddedToCluster(uint indexed areaTokenId, uint indexed clusterTokenId, uint256 revision);
@@ -334,7 +334,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
 
         Cluster storage cluster = _clusters[tokenId];
         cluster.revision = 1;
-        emit ClusterCreated(tokenId, title);
+        emit ClusterCreated(tokenId, me, title);
     }
 
     function removeCluster(uint256 tokenId) public
