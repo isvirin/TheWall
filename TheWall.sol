@@ -187,7 +187,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     event ItemTransferred(uint indexed tokenId, address indexed from, address indexed to);
     event ItemForRent(uint indexed tokenId, uint256 priceWei, uint256 durationSeconds);
     event ItemForSale(uint indexed tokenId, uint256 priceWei);
-    event ItemRented(uint indexed tokenId, address indexed landlord);
+    event ItemRented(uint indexed tokenId, address indexed landlord, uint256 finishTime);
     event ItemReset(uint indexed tokenId);
     event ItemRentFinished(uint indexed tokenId);
 
@@ -495,7 +495,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         token.cost = 0;
         token.rentDuration = now.add(token.rentDuration);
         token.landlord = me;
-        emit ItemRented(tokenId, me);
+        emit ItemRented(tokenId, me, token.rentDuration);
     }
     
     function cancel(uint256 tokenId) public
