@@ -26,10 +26,36 @@ import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/A
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
 
 
-contract Users
+contract Users is Context
 {
-    // контракт для определения соответствия address пользователя,
-    // никнейма и аватарки
+    struct User
+    {
+        string nickname;
+        bytes  avatar;
+    }
+    
+    mapping (address => User) public _users;
+    
+    event NicknameChanged(address indexed user, string nickname);
+    event AvatarChanged(address indexed user, bytes avatar);
+    
+    function setNickname(string memory nickname) public
+    {
+        _users[_msgSender()].nickname = nickname;
+        emit NicknameChanged(_msgSender(), nickname);
+    }
+
+    function setAvatar(bytes memory avatar) public
+    {
+        _users[_msgSender()].avatar = avatar;
+        emit AvatarChanged(_msgSender(), avatar);
+    }
+    
+    function setNicknameAvatar(string memory nickname, bytes memory avatar) public
+    {
+        setNickname(nickname);
+        setAvatar(avatar);
+    }
 }
 
 contract Marketing is WhitelistAdminRole
