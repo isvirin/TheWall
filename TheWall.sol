@@ -32,6 +32,29 @@ contract Users
     // никнейма и аватарки
 }
 
+contract Marketing is WhitelistAdminRole
+{
+    using SafeMath for uint256;
+    mapping (address => uint256) public _coupons;
+    
+    function _useCoupons(address owner, uint256 count) internal returns(bool)
+    {
+        if (_coupons[owner] >= count)
+        {
+            _coupons[owner] -= count;
+            return true;
+        }
+        return false;
+    }
+    
+    function giveCoupons(address[] memory owners, uint256 count) public onlyWhitelistAdmin
+    {
+        for(uint i = 0; i < owners.length; ++i)
+        {
+            _coupons[owners[i]] = _coupons[owners[i]].add(count);
+        }
+    }
+}
 
 contract RefModel
 {
@@ -71,7 +94,7 @@ contract RefModel
 }
 
 
-contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users
+contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
 {
     using Address for address;
     
@@ -319,10 +342,21 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users
         require(!me.isContract(), "TheWall: Forbidden to call from smartcontract");
         require(x<_wallWidth && y<_wallHeight, "TheWall: Out of wall");
         require(_areasOnTheWall[x][y][p] == uint256(0), "TheWall: Area is busy");
-        require(msg.value == _costWei, "TheWall: Invalid amount of wei");
+        bool gift = _useCoupons(me, 1);
+        require(gift || msg.value == _costWei, "TheWall: Invalid amount of wei");
 
-        uint256 alreadyPayed = processRef(me, referrerCandidate, _costWei);
-        _fundsReceiver.transfer(_costWei.sub(alreadyPayed));
+        if (gift)
+        {
+            if (msg.value != 0)
+            {
+                _msgSender().transfer(msg.value);
+            }
+        }
+        else
+        {
+            uint256 alreadyPayed = processRef(me, referrerCandidate, _costWei);
+            _fundsReceiver.transfer(_costWei.sub(alreadyPayed));
+        }
 
         _minterCounter = _minterCounter.add(1);
         uint256 tokenId = _minterCounter;
