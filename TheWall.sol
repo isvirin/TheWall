@@ -62,7 +62,6 @@ contract Users is Context
 contract Marketing is WhitelistAdminRole
 {
     using SafeMath for uint256;
-    using SignedSafeMath for int256;
     
     mapping (address => uint256) public _coupons;
     
@@ -126,6 +125,7 @@ contract RefModel
 contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
 {
     using Address for address;
+    using SignedSafeMath for int256;
     
     enum Status
     {
