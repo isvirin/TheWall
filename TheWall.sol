@@ -24,6 +24,7 @@ import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/drafts/SignedSafeMath.sol";
 
 
 contract Users is Context
@@ -61,6 +62,8 @@ contract Users is Context
 contract Marketing is WhitelistAdminRole
 {
     using SafeMath for uint256;
+    using SignedSafeMath for int256;
+    
     mapping (address => uint256) public _coupons;
     
     function _useCoupons(address owner, uint256 count) internal returns(bool)
@@ -153,9 +156,8 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     
     struct Area
     {
-        uint256    x;
-        uint256    y;
-        uint8      p;
+        int256     x;
+        int256     y;
         bool       premium;
         uint256    cluster;
         byte[300]  image;
@@ -167,12 +169,12 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         uint256    revision;
     }
 
-    event SizeChanged(uint256 wallWidth, uint256 wallHeight);
+    event SizeChanged(int256 wallWidth, int256 wallHeight);
     event FundsReceiverChaged(address fundsReceiver);
 
     event AreaCostChanged(uint256 costWei);
 
-    event AreaCreated(uint256 indexed tokenId, address indexed owner, uint256 x, uint256 y, uint8 p, bool premium);
+    event AreaCreated(uint256 indexed tokenId, address indexed owner, int256 x, int256 y, bool premium);
     event ClusterCreated(uint indexed tokenId, address indexed owner, string title);
     event ClusterRemoved(uint indexed tokenId);
 
@@ -193,12 +195,12 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
 
     address payable private _fundsReceiver;
     uint256 private _costWei;
-    uint256 private _wallWidth;
-    uint256 private _wallHeight;
+    int256  private _wallWidth;
+    int256  private _wallHeight;
     uint256 private _minterCounter;
     
-    // x => y => p => area erc-721
-    mapping (uint256 => mapping (uint256 => mapping (uint8 => uint256))) private _areasOnTheWall;
+    // x => y => area erc-721
+    mapping (int256 => mapping (int256 => uint256)) private _areasOnTheWall;
 
     // erc-721 => Token, Area or Cluster
     mapping (uint256 => Token) private _tokens;
@@ -209,6 +211,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     {
         _wallWidth = 1000;
         _wallHeight = 1000;
+        _costWei = 1 ether / 10;
         _fundsReceiver = _msgSender();
     }
 
@@ -218,7 +221,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         emit FundsReceiverChaged(fundsReceiver);
     }
     
-    function setWallSize(uint256 wallWidth, uint256 wallHeight) public onlyWhitelistAdmin
+    function setWallSize(int256 wallWidth, int256 wallHeight) public onlyWhitelistAdmin
     {
         require(wallWidth >= _wallWidth && wallHeight >= _wallHeight, "TheWall: Wall can grow only");
         _wallWidth = wallWidth;
@@ -226,12 +229,12 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         emit SizeChanged(wallWidth, wallHeight);
     }
 
-    function wallWidth() view public returns (uint256)
+    function wallWidth() view public returns (int256)
     {
         return _wallWidth;
     }
 
-    function wallHeight() view public returns (uint256)
+    function wallHeight() view public returns (int256)
     {
         return _wallHeight;
     }
@@ -318,7 +321,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         emit ItemForRent(tokenId, priceWei, durationSeconds);
     }
 
-    function createCluster(string memory title) public
+    function createCluster(string memory title) public returns (uint256)
     {
         address me = _msgSender();
         require(!me.isContract(), "TheWall: Forbidden call from smartcontract");
@@ -335,6 +338,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         Cluster storage cluster = _clusters[tokenId];
         cluster.revision = 1;
         emit ClusterCreated(tokenId, me, title);
+        return tokenId;
     }
 
     function removeCluster(uint256 tokenId) public
@@ -366,7 +370,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     }
     
     uint256 constant private FACTOR =  1157920892373161954235709850086879078532699846656405640394575840079131296399;
-    function _rand(uint max) pure private returns (uint256)
+    function _rand(uint max) pure internal returns (uint256)
     {
         uint256 factor = FACTOR * 100 / max;
         uint256 lastBlockNumber = block.number - 1;
@@ -374,15 +378,55 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         return uint256((uint256(hashVal) / factor)) % max;
     }
 
-    function create(uint256 x, uint256 y, uint8 p, address payable referrerCandidate) public payable returns (uint256)
+    function _abs(int256 v) pure internal returns (int256)
+    {
+        if (v < 0)
+        {
+            v = -v;
+        }
+        return v;
+    }
+
+    function _create(address owner, int256 x, int256 y, uint256 clusterId) internal returns (uint256)
+    {
+        _minterCounter = _minterCounter.add(1);
+        uint256 tokenId = _minterCounter;
+        _mint(owner, tokenId);
+        _areasOnTheWall[x][y] = tokenId;
+
+        Token storage token = _tokens[tokenId];
+        token.tt = TokenType.Area;
+        token.status = Status.None;
+
+        Area storage area = _areas[tokenId];
+        area.x = x;
+        area.y = y;
+        area.premium = (_rand(1000) % 1000 == 0);
+        area.premium = false;
+
+        emit AreaCreated(tokenId, owner, x, y, area.premium);
+        
+        if (clusterId !=0)
+        {
+            area.cluster = clusterId;
+        
+            Cluster storage cluster = _clusters[clusterId];
+            cluster.revision += 1;
+            cluster.areas.push(tokenId);
+            emit AreaAddedToCluster(tokenId, clusterId, cluster.revision);
+        }
+        
+        return tokenId;
+    }
+
+    function create(int256 x, int256 y, address payable referrerCandidate) public payable returns (uint256)
     {
         address me = _msgSender();
         require(!me.isContract(), "TheWall: Forbidden to call from smartcontract");
-        require(x<_wallWidth && y<_wallHeight, "TheWall: Out of wall");
-        require(_areasOnTheWall[x][y][p] == uint256(0), "TheWall: Area is busy");
+        require(_abs(x)<_wallWidth && _abs(y)<_wallHeight, "TheWall: Out of wall");
+        require(_areasOnTheWall[x][y] == uint256(0), "TheWall: Area is busy");
         bool gift = _useCoupons(me, 1);
         require(gift || msg.value == _costWei, "TheWall: Invalid amount of wei");
-
         if (gift)
         {
             if (msg.value != 0)
@@ -395,30 +439,52 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
             uint256 alreadyPayed = processRef(me, referrerCandidate, _costWei);
             _fundsReceiver.transfer(_costWei.sub(alreadyPayed));
         }
-
-        _minterCounter = _minterCounter.add(1);
-        uint256 tokenId = _minterCounter;
-        _mint(me, tokenId);
-        _areasOnTheWall[x][y][p] = tokenId;
-
-        Token storage token = _tokens[tokenId];
-        token.tt = TokenType.Area;
-        token.status = Status.None;
-
-        Area storage area = _areas[tokenId];
-        area.x = x;
-        area.y = y;
-        area.p = p;
-        area.premium = (_rand(1000) % 1000 == 0);
-        area.premium = false;
-
-        emit AreaCreated(tokenId, me, x, y, p, area.premium);
+        return _create(me, x, y, 0);
     }
 
-    //function createCluster(uint256 x, uint256 y, uint256 width, uint256 height, uint8 p, address payable referrerCandidate) public payable returns (uint256)
-    //{
-        // TODO: implement me
-    //}
+    function createMulti(int256 x, int256 y, int256 width, int256 height, address payable referrerCandidate) public payable returns (uint256)
+    {
+        address me = _msgSender();
+        require(!me.isContract(), "TheWall: Forbidden to call from smartcontract");
+        require(_abs(x)<_wallWidth && _abs(y)<_wallHeight, "TheWall: Out of wall");
+        require(_abs(x.add(width))<_wallWidth && _abs(y.add(height))<_wallHeight, "TheWall: Out of wall 2");
+        require(width>0 && height>0, "TheWall: dimensions must be greater than zero");
+
+        uint256 areasNum = 0;
+        for(int256 i = 0; i < width; ++i)
+        {
+            for(int256 j = 0; j < height; ++j)
+            {
+                if (_areasOnTheWall[x][y] == uint256(0))
+                {
+                    areasNum = areasNum.add(1);
+                }
+            }
+        }
+        require(areasNum > 0, "TheWall: All areas inside are busy");
+        
+        uint256 costMulti = areasNum.mul(_costWei);
+        require(costMulti <= msg.value, "TheWall: Invalid amount of wei");
+        if (msg.value > costMulti)
+        {
+            _msgSender().transfer(msg.value.sub(costMulti));
+        }
+
+        uint256 alreadyPayed = processRef(me, referrerCandidate, costMulti);
+        _fundsReceiver.transfer(costMulti.sub(alreadyPayed));
+
+        uint256 cluster = createCluster("");
+        for(int256 i = 0; i < width; ++i)
+        {
+            for(int256 j = 0; j < height; ++j)
+            {
+                if (_areasOnTheWall[x][y] == uint256(0))
+                {
+                    _create(me, x.add(i), y.add(j), cluster);
+                }
+            }
+        }
+    }
     
     function buy(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
