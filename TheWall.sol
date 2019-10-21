@@ -65,14 +65,20 @@ contract Marketing is WhitelistAdminRole
     
     mapping (address => uint256) public _coupons;
     
-    function _useCoupons(address owner, uint256 count) internal returns(bool)
+    function _useCoupons(address owner, uint256 count) internal returns(uint256)
     {
-        if (_coupons[owner] >= count)
+        uint256 used;
+        if (count >= _coupons[owner])
+        {
+            used = _coupons[owner];
+            delete _coupons[owner];
+        }
+        else
         {
             _coupons[owner] -= count;
-            return true;
+            used = count;
         }
-        return false;
+        return used;
     }
     
     function giveCoupons(address[] memory owners, uint256 count) public onlyWhitelistAdmin
@@ -425,7 +431,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         require(!me.isContract(), "TheWall: Forbidden to call from smartcontract");
         require(_abs(x)<_wallWidth && _abs(y)<_wallHeight, "TheWall: Out of wall");
         require(_areasOnTheWall[x][y] == uint256(0), "TheWall: Area is busy");
-        bool gift = _useCoupons(me, 1);
+        bool gift = (_useCoupons(me, 1) == 1);
         require(gift || msg.value == _costWei, "TheWall: Invalid amount of wei");
         if (gift)
         {
@@ -463,15 +469,21 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         }
         require(areasNum > 0, "TheWall: All areas inside are busy");
         
-        uint256 costMulti = areasNum.mul(_costWei);
+        uint256 usedCoupons = _useCoupons(me, areasNum);
+        areasNum -= usedCoupons;
+
+        uint256 costMulti = _costWei.mul(areasNum);
         require(costMulti <= msg.value, "TheWall: Invalid amount of wei");
         if (msg.value > costMulti)
         {
             _msgSender().transfer(msg.value.sub(costMulti));
         }
 
-        uint256 alreadyPayed = processRef(me, referrerCandidate, costMulti);
-        _fundsReceiver.transfer(costMulti.sub(alreadyPayed));
+        if (costMulti > 0)
+        {
+            uint256 alreadyPayed = processRef(me, referrerCandidate, costMulti);
+            _fundsReceiver.transfer(costMulti.sub(alreadyPayed));
+        }
 
         uint256 cluster = createCluster("");
         for(int256 i = 0; i < width; ++i)
