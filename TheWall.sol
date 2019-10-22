@@ -25,6 +25,7 @@ import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Con
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/drafts/SignedSafeMath.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/drafts/Strings.sol";
 
 
 contract Users is Context
@@ -143,6 +144,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
 {
     using Address for address;
     using SignedSafeMath for int256;
+    using Strings for uint256;
     
     enum Status
     {
@@ -216,6 +218,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     int256  private _wallWidth;
     int256  private _wallHeight;
     uint256 private _minterCounter;
+    string  private _baseTokenURI;
     
     // x => y => area erc-721
     mapping (int256 => mapping (int256 => uint256)) private _areasOnTheWall;
@@ -230,6 +233,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         _wallWidth = 1000;
         _wallHeight = 1000;
         _costWei = 1 ether / 10;
+        _baseTokenURI = "https://thewall.com/erc721/";
         _fundsReceiver = _msgSender();
     }
 
@@ -271,6 +275,17 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     function safeTransferFrom(address from, address to, uint256 tokenId) public
     {
         safeTransferFrom(from, to, tokenId, "");
+    }
+
+    function setBaseTokenURI(string memory uri) public onlyWhitelistAdmin
+    {
+        _baseTokenURI = uri;
+    }
+
+    function tokenURI(uint256 tokenId) external view returns (string memory)
+    {
+        require(_exists(tokenId), "TheWall: URI query for nonexistent token");
+        return string(abi.encodePacked(_baseTokenURI, tokenId.fromUint256()));
     }
 
     function _canBeTransferred(uint256 tokenId) internal returns(TokenType)
