@@ -61,6 +61,9 @@ contract Users is Context
 
 contract Marketing is WhitelistAdminRole
 {
+    event CouponsCreated(address indexed owner, uint256 total, uint256 created);
+    event CouponsUsed(address indexed owner, uint256 total, uint256 used);
+    
     using SafeMath for uint256;
     
     mapping (address => uint256) public _coupons;
@@ -78,6 +81,10 @@ contract Marketing is WhitelistAdminRole
             _coupons[owner] -= count;
             used = count;
         }
+        if (used > 0)
+        {
+            emit CouponsUsed(owner, _coupons[owner], used);
+        }
         return used;
     }
     
@@ -86,6 +93,7 @@ contract Marketing is WhitelistAdminRole
         for(uint i = 0; i < owners.length; ++i)
         {
             _coupons[owners[i]] = _coupons[owners[i]].add(count);
+            emit CouponsCreated(owners[i], _coupons[owners[i]], count);
         }
     }
 }
@@ -95,6 +103,7 @@ contract RefModel
     using SafeMath for uint256;
 
     event ReferrerChanged(address indexed me, address indexed referrer);
+    event ReferralPayment(address indexed referrer, address indexed referral, uint256 amountWei);
 
     mapping (address => address payable) private _referrers;
 
@@ -114,12 +123,14 @@ contract RefModel
         {
             ref.transfer(refPayment);
             alreadyPayed = refPayment;
+            emit ReferralPayment(ref, me, refPayment);
             
             ref = _referrers[ref];
             if (ref != address(0))
             {
                 ref.transfer(refPayment);
                 alreadyPayed = refPayment.mul(2);
+                emit ReferralPayment(ref, me, refPayment);
             }
         }
         
@@ -176,7 +187,8 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     }
 
     event SizeChanged(int256 wallWidth, int256 wallHeight);
-    event FundsReceiverChaged(address fundsReceiver);
+    event FundsReceiverChanged(address fundsReceiver);
+    event Payment(address indexed sender, uint256 amountWei);
 
     event AreaCostChanged(uint256 costWei);
 
@@ -224,7 +236,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
     function setFundsReceiver(address payable fundsReceiver) public onlyWhitelistAdmin
     {
         _fundsReceiver = fundsReceiver;
-        emit FundsReceiverChaged(fundsReceiver);
+        emit FundsReceiverChanged(fundsReceiver);
     }
     
     function setWallSize(int256 wallWidth, int256 wallHeight) public onlyWhitelistAdmin
@@ -444,6 +456,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         {
             uint256 alreadyPayed = processRef(me, referrerCandidate, _costWei);
             _fundsReceiver.transfer(_costWei.sub(alreadyPayed));
+            emit Payment(me, msg.value);
         }
         return _create(me, x, y, 0);
     }
@@ -483,6 +496,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         {
             uint256 alreadyPayed = processRef(me, referrerCandidate, costMulti);
             _fundsReceiver.transfer(costMulti.sub(alreadyPayed));
+            emit Payment(me, costMulti);
         }
 
         uint256 cluster = createCluster("");
@@ -508,6 +522,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         require(token.tt != TokenType.Unknown, "TheWall: No token found");
         require(token.status == Status.ForSale, "TheWall: Item is not for sale");
         require(msg.value == token.cost, "TheWall: Invalid amount of wei");
+        emit Payment(me, msg.value);
 
         uint256 fee;
         bool premium = false;
@@ -548,6 +563,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         require(token.tt != TokenType.Unknown, "TheWall: No token found");
         require(token.status == Status.ForRent, "TheWall: Item is not for rent");
         require(msg.value == token.cost, "TheWall: Invalid amount of wei");
+        emit Payment(me, msg.value);
 
         uint256 fee;
         bool premium = false;
