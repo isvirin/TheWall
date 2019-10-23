@@ -233,7 +233,7 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         _wallWidth = 1000;
         _wallHeight = 1000;
         _costWei = 1 ether / 10;
-        _baseTokenURI = "https://thewall.com/erc721/";
+        _baseTokenURI = "https://thewall.global/erc721/";
         _fundsReceiver = _msgSender();
     }
 
