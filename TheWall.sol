@@ -434,8 +434,14 @@ contract TheWall is ERC721Full, WhitelistAdminRole, RefModel, Users, Marketing
         Area storage area = _areas[tokenId];
         area.x = x;
         area.y = y;
-        area.premium = (_rand(1000) % 1000 == 0);
-        area.premium = false;
+        if (_abs(x) <= 100 && _abs(y) <= 100)
+        {
+            area.premium = true;
+        }
+        else
+        {
+            area.premium = (_rand(1000) % 1000 == 0);
+        }
 
         emit AreaCreated(tokenId, owner, x, y, area.premium);
         
