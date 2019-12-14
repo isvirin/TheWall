@@ -17,15 +17,24 @@ along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
 @author Ilya Svirin <is.svirin@gmail.com>
 */
 
-pragma solidity ^0.5.0;
+pragma solidity ^0.5.5;
 
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/drafts/SignedSafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
+import "./thewallusers.sol";
 
 
-contract TheWallCore is WhitelistAdminRole
+contract TheWallCore is WhitelistAdminRole, TheWallUsers
 {
     using SafeMath for uint256;
+    using SignedSafeMath for int256;
+    using Address for address;
+    using Address for address payable;
+
+    event SizeChanged(int256 wallWidth, int256 wallHeight);
+    event AreaCostChanged(uint256 costWei);
+    event FundsReceiverChanged(address fundsReceiver);
 
     enum Status
     {
@@ -51,7 +60,8 @@ contract TheWallCore is WhitelistAdminRole
         string     title;
         uint256    cost;
         uint256    rentDuration;
-        address    landlord;
+        address    tenant;
+        bytes      content;
     }
     
     struct Area
@@ -60,7 +70,7 @@ contract TheWallCore is WhitelistAdminRole
         int256     y;
         bool       premium;
         uint256    cluster;
-        byte[300]  image;
+        bytes      image;
     }
 
     struct Cluster
@@ -77,6 +87,37 @@ contract TheWallCore is WhitelistAdminRole
     mapping (uint256 => Area) private _areas;
     mapping (uint256 => Cluster) private _clusters;
 
+    int256  public  _wallWidth;
+    int256  public  _wallHeight;
+    uint256 public  _costWei;
+    address payable private _fundsReceiver;
+
+    constructor (address coupons) TheWallUsers(coupons) public
+    {
+        _wallWidth = 1000;
+        _wallHeight = 1000;
+        _costWei = 1 ether / 10;
+        _fundsReceiver = _msgSender();
+    }
+    
+    function setWallSize(int256 wallWidth, int256 wallHeight) public onlyWhitelistAdmin
+    {
+        _wallWidth = wallWidth;
+        _wallHeight = wallHeight;
+        emit SizeChanged(wallWidth, wallHeight);
+    }
+
+    function setCostWei(uint256 costWei) public onlyWhitelistAdmin
+    {
+        _costWei = costWei;
+        emit AreaCostChanged(costWei);
+    }
+
+    function setFundsReceiver(address payable fundsReceiver) public onlyWhitelistAdmin
+    {
+        _fundsReceiver = fundsReceiver;
+        emit FundsReceiverChanged(fundsReceiver);
+    }
 
     function _canBeTransferred(uint256 tokenId) public view returns(TokenType)
     {
@@ -183,7 +224,7 @@ contract TheWallCore is WhitelistAdminRole
         }
         else
         {
-            area.premium = (_rand(1000) % 1000 == 0);
+            area.premium = (_rand(1000) == 1);
         }
         premium = area.premium;
 
@@ -206,56 +247,86 @@ contract TheWallCore is WhitelistAdminRole
         return _areasOnTheWall[x][y];
     }
 
-    function _buy(uint256 tokenId, uint256 weiAmount, uint256 revision) payable onlyWhitelistAdmin public returns(bool premium)
+    function _buy(address payable tokenOwner, uint256 tokenId, address me, uint256 weiAmount, uint256 revision, address payable referrerCandidate) payable onlyWhitelistAdmin public
     {
         Token storage token = _tokens[tokenId];
         require(token.tt != TokenType.Unknown, "TheWallCore: No token found");
         require(token.status == Status.ForSale, "TheWallCore: Item is not for sale");
         require(weiAmount == token.cost, "TheWallCore: Invalid amount of wei");
 
-        premium = false;
+        bool premium = false;
         if (token.tt == TokenType.Area)
         {
             Area storage area = _areas[tokenId];
+            require(area.cluster == 0, "TheWallCore: Owned by cluster area can't be sold");
             premium = area.premium;
         }
         else
         {
-            Cluster storage cluster = _clusters[tokenId];
-            require(cluster.revision == revision, "TheWallCore: Incorrect cluster's revision");
+            require(_clusters[tokenId].revision == revision, "TheWallCore: Incorrect cluster's revision");
         }
         
         token.status = Status.None;
-        return premium;
+
+        uint256 fee;
+        if (!premium)
+        {
+            fee = msg.value.mul(30).div(100);
+            uint256 alreadyPayed = _processRef(me, referrerCandidate, fee);
+            _fundsReceiver.sendValue(fee.sub(alreadyPayed));
+        }
+        tokenOwner.sendValue(msg.value.sub(fee));
     }
     
-    function _rent(uint256 tokenId, address me, uint256 weiAmount, uint256 revision) payable onlyWhitelistAdmin public returns(bool premium, uint256 rentDuration)
+    function _rent(address payable tokenOwner, uint256 tokenId, address me, uint256 weiAmount, uint256 revision, address payable referrerCandidate) payable onlyWhitelistAdmin public returns(uint256 rentDuration)
     {
         Token storage token = _tokens[tokenId];
         require(token.tt != TokenType.Unknown, "TheWallCore: No token found");
         require(token.status == Status.ForRent, "TheWallCore: Item is not for rent");
         require(weiAmount == token.cost, "TheWallCore: Invalid amount of wei");
 
-        premium = false;
+        bool premium = false;
         if (token.tt == TokenType.Area)
         {
             Area storage area = _areas[tokenId];
+            require(area.cluster == 0, "TheWallCore: Owned by cluster area can't be rented");
             premium = area.premium;
         }
         else
         {
-            Cluster storage cluster = _clusters[tokenId];
-            require(cluster.revision == revision, "TheWall: Incorrect cluster's revision");
+            require(_clusters[tokenId].revision == revision, "TheWall: Incorrect cluster's revision");
         }
 
         rentDuration = now.add(token.rentDuration);
         token.status = Status.Rented;
         token.cost = 0;
         token.rentDuration = rentDuration;
-        token.landlord = me;
-        return (premium, rentDuration);
+        token.tenant = me;
+        
+        uint256 fee;
+        if (!premium)
+        {
+            fee = msg.value.mul(30).div(100);
+            uint256 alreadyPayed = _processRef(me, referrerCandidate, fee);
+            _fundsReceiver.sendValue(fee.sub(alreadyPayed));
+        }
+        tokenOwner.sendValue(msg.value.sub(fee));
+
+        return rentDuration;
     }
-    
+
+    function _rentTo(uint256 tokenId, address tenant, uint256 durationSeconds) onlyWhitelistAdmin public returns(uint256 rentDuration)
+    {
+        _canBeTransferred(tokenId);
+        rentDuration = now.add(durationSeconds);
+        Token storage token = _tokens[tokenId];
+        token.status = Status.Rented;
+        token.cost = 0;
+        token.rentDuration = rentDuration;
+        token.tenant = tenant;
+        return rentDuration;
+    }
+
     function _cancel(uint256 tokenId) onlyWhitelistAdmin public
     {
         Token storage token = _tokens[tokenId];
@@ -270,16 +341,19 @@ contract TheWallCore is WhitelistAdminRole
     {
         Token storage token = _tokens[tokenId];
         require(token.tt != TokenType.Unknown, "TheWallCore: No token found");
-        require(token.landlord == who, "TheWall: Only landlord can finish rent");
+        require(token.tenant == who, "TheWall: Only tenant can finish rent");
         require(token.status == Status.Rented && token.rentDuration > now, "TheWallCore: item is not rented");
         token.status = Status.None;
         token.rentDuration = 0;
         token.cost = 0;
-        token.landlord = address(0);
+        token.tenant = address(0);
     }
     
-    function _addToCluster(uint256 areaId, uint256 clusterId) onlyWhitelistAdmin public returns(uint256 revision)
+    function _addToCluster(address me, address areaOwner, address clusterOwner, uint256 areaId, uint256 clusterId) onlyWhitelistAdmin public returns(uint256 revision)
     {
+        require(areaOwner == clusterOwner, "TheWallCore: Area and Cluster have different owners");
+        require(areaOwner == me, "TheWallCore: Can be called from owner only");
+
         Token storage areaToken = _tokens[areaId];
         Token storage clusterToken = _tokens[clusterId];
         require(areaToken.tt == TokenType.Area, "TheWallCore: Area not found");
@@ -291,14 +365,21 @@ contract TheWallCore is WhitelistAdminRole
         require(area.cluster == 0, "TheWallCore: Area already in cluster");
         area.cluster = clusterId;
         
+        areaToken.status = Status.None;
+        areaToken.rentDuration = 0;
+        areaToken.cost = 0;
+        
         Cluster storage cluster = _clusters[clusterId];
         cluster.revision += 1;
         cluster.areas.push(areaId);
         return cluster.revision;
     }
 
-    function _removeFromCluster(uint256 areaId, uint256 clusterId) onlyWhitelistAdmin public returns(uint256 revision)
+    function _removeFromCluster(address me, address areaOwner, address clusterOwner, uint256 areaId, uint256 clusterId) onlyWhitelistAdmin public returns(uint256 revision)
     {
+        require(areaOwner == clusterOwner, "TheWallCore: Area and Cluster have different owners");
+        require(areaOwner == me, "TheWallCore: Can be called from owner only");
+
         Token storage areaToken = _tokens[areaId];
         Token storage clusterToken = _tokens[clusterId];
         require(areaToken.tt == TokenType.Area, "TheWallCore: Area not found");
@@ -328,22 +409,39 @@ contract TheWallCore is WhitelistAdminRole
         return cluster.revision;
     }
 
-    function _canBeManaged(address who, address owner, uint256 tokenId) internal view returns (TokenType)
+    function _canBeManaged(address who, address owner, uint256 tokenId) internal view returns (TokenType t)
     {
         Token storage token = _tokens[tokenId];
-        require(token.tt != TokenType.Unknown, "TheWallCore: No token found");
+        t = token.tt;
+        require(t != TokenType.Unknown, "TheWallCore: No token found");
+        if (t == TokenType.Area)
+        {
+            Area storage area = _areas[tokenId];
+            if (area.cluster != uint256(0))
+            {
+                token = _tokens[area.cluster];
+                require(token.tt == TokenType.Cluster, "TheWallCore: No cluster token found");
+            }
+        }
+        
         if (token.status == Status.Rented && token.rentDuration > now)
         {
-            require(who == token.landlord, "TheWallCore: Rented token can be managed by landlord only");
+            require(who == token.tenant, "TheWallCore: Rented token can be managed by tenant only");
         }
         else
         {
             require(who == owner, "TheWallCore: Only owner can manager token");
         }
-        return token.tt;
     }
 
-    function _setImage(address who, address owner, uint256 tokenId, byte[300] memory image) onlyWhitelistAdmin public
+    function _setContent(address who, address owner, uint256 tokenId, bytes memory content) onlyWhitelistAdmin public
+    {
+        _canBeManaged(who, owner, tokenId);
+        Token storage token = _tokens[tokenId];
+        token.content = content;
+    }
+
+    function _setImage(address who, address owner, uint256 tokenId, bytes memory image) onlyWhitelistAdmin public
     {
         TokenType tt = _canBeManaged(who, owner, tokenId);
         require(tt == TokenType.Area, "TheWallCore: Image can be set to area only");
@@ -372,16 +470,63 @@ contract TheWallCore is WhitelistAdminRole
         token.title = title;
     }
 
-    function tokenInfo(uint256 tokenId) public view returns(byte[300] memory, string memory, string memory, string memory)
+    function tokenInfo(uint256 tokenId) public view returns(bytes memory, string memory, string memory, string memory, bytes memory)
     {
         Token memory token = _tokens[tokenId];
-        byte[300] memory image;
+        bytes memory image;
         if (token.tt == TokenType.Area)
         {
             Area storage area = _areas[tokenId];
             image = area.image;
         }
-        return (image, token.link, token.tags, token.title);
+        return (image, token.link, token.tags, token.title, token.content);
+    }
+
+    function _canBeCreated(int256 x, int256 y) view public
+    {
+        require(_abs(x) < _wallWidth && _abs(y) < _wallHeight, "TheWallCore: Out of wall");
+        require(_areaOnTheWall(x, y) == uint256(0), "TheWallCore: Area is busy");
+    }
+
+    function _processPaymentCreate(address me, uint256 weiAmount, uint256 areasNum, address payable referrerCandidate) onlyWhitelistAdmin public payable returns(uint256)
+    {
+        uint256 usedCoupons = _useCoupons(me, areasNum);
+        areasNum -= usedCoupons;
+        return _processPayment(me, weiAmount, areasNum, referrerCandidate);
+    }
+    
+    function _processPayment(address me, uint256 weiAmount, uint256 itemsAmount, address payable referrerCandidate) internal returns (uint256)
+    {
+        uint256 payValue = _costWei.mul(itemsAmount);
+        require(payValue <= weiAmount, "TheWallCore: Invalid amount of wei");
+        if (weiAmount > payValue)
+        {
+            me.toPayable().sendValue(weiAmount.sub(payValue));
+        }
+        if (payValue > 0)
+        {
+            uint256 alreadyPayed = _processRef(me, referrerCandidate, payValue);
+            _fundsReceiver.sendValue(payValue.sub(alreadyPayed));
+        }
+        return payValue;
+    }
+
+    function _canBeCreatedMulti(int256 x, int256 y, int256 width, int256 height) view public
+    {
+        require(_abs(x) < _wallWidth && _abs(y) < _wallHeight, "TheWallCpre: Out of wall");
+        require(_abs(x.add(width)) < _wallWidth && _abs(y.add(height)) < _wallHeight, "TheWallCore: Out of wall 2");
+        require(width > 0 && height > 0, "TheWallCore: dimensions must be greater than zero");
+    }
+
+    function _buyCoupons(address me, uint256 weiAmount, address payable referrerCandidate) public payable onlyWhitelistAdmin returns (uint256)
+    {
+        uint256 couponsAmount = weiAmount.div(_costWei);
+        uint payValue = _processPayment(me, weiAmount, couponsAmount, referrerCandidate);
+        if (payValue > 0)
+        {
+            giveCoupons(me, couponsAmount);
+        }
+        return payValue;
     }
 
     function _opaqueCall(address a, bytes memory b) onlyWhitelistAdmin public

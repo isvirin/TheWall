@@ -1,0 +1,101 @@
+/*
+This file is part of the TheWall project.
+
+The TheWall Contract is free software: you can redistribute it and/or
+modify it under the terms of the GNU lesser General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+The TheWall Contract is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU lesser General Public License for more details.
+
+You should have received a copy of the GNU lesser General Public License
+along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
+
+@author Ilya Svirin <is.svirin@gmail.com>
+*/
+
+pragma solidity ^0.5.5;
+
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
+
+
+contract ERC223ReceivingContract
+{
+    function tokenFallback(address sender, uint amount, bytes memory data) public;
+}
+
+
+contract TheWallCoupons is Context, WhitelistAdminRole
+{
+    using SafeMath for uint256;
+    using Address for address;
+
+    string public standard='Token 0.1';
+    string public name='TheWall';
+    string public symbol='TWC';
+    uint8 public decimals=0;
+    
+    event Transfer(address indexed sender, address indexed receiver, uint256 amount, bytes data);
+
+    mapping(address => uint256) public balanceOf;
+    uint256 public totalSupply;
+
+    function transfer(address receiver, uint256 amount, bytes memory data) public returns(bool)
+    {
+        _transfer(_msgSender(), receiver, amount, data);
+        return true;
+    }
+    
+    function transfer(address receiver, uint256 amount) public returns(bool)
+    {
+        bytes memory empty;
+         _transfer(_msgSender(), receiver, amount, empty);
+         return true;
+    }
+
+    function _transfer(address sender, address receiver, uint amount, bytes memory data) internal
+    {
+        require(receiver != address(0), "TheWallCoupons: Transfer to zero-address is forbidden");
+
+        balanceOf[sender] = balanceOf[sender].sub(amount);
+        balanceOf[receiver] = balanceOf[receiver].add(amount);
+        
+        if (receiver.isContract())
+        {
+            ERC223ReceivingContract r = ERC223ReceivingContract(receiver);
+            r.tokenFallback(sender, amount, data);
+        }
+        emit Transfer(sender, receiver, amount, data);
+    }
+
+    function _mint(address account, uint256 amount) onlyWhitelistAdmin public
+    {
+        require(account != address(0), "TheWallCoupons: mint to the zero address");
+
+        totalSupply = totalSupply.add(amount);
+        balanceOf[account] = balanceOf[account].add(amount);
+        bytes memory empty;
+        emit Transfer(address(0), account, amount, empty);
+    }
+
+    function _burn(address account, uint256 amount) onlyWhitelistAdmin public
+    {
+        require(account != address(0), "TheWallCoupons: burn from the zero address");
+
+        balanceOf[account] = balanceOf[account].sub(amount, "TheWallCoupons: burn amount exceeds balance");
+        totalSupply = totalSupply.sub(amount);
+        bytes memory empty;
+        emit Transfer(account, address(0), amount, empty);
+    }
+    
+    function _opaqueCall(address a, bytes memory b) onlyWhitelistAdmin public
+    {
+        a.delegatecall(b);
+    }
+}
