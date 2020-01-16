@@ -46,6 +46,21 @@ contract TheWallCoupons is Context, WhitelistAdminRole
     mapping(address => uint256) public balanceOf;
     uint256 public totalSupply;
 
+    address private _thewallusers;
+
+    function setTheWallUsers(address thewallusers) public
+    {
+        require(thewallusers != address(0), "TheWallCoupons: non-zero address is required");
+        require(_thewallusers == address(0), "TheWallCoupons: _thewallusers can be initialized only once");
+        _thewallusers = thewallusers;
+    }
+
+    modifier onlyTheWallUsers()
+    {
+        require(_msgSender() == _thewallusers, "TheWallCoupons: can be called from _theWallusers only");
+        _;
+    }
+
     function transfer(address receiver, uint256 amount, bytes memory data) public returns(bool)
     {
         _transfer(_msgSender(), receiver, amount, data);
@@ -54,7 +69,7 @@ contract TheWallCoupons is Context, WhitelistAdminRole
     
     function transfer(address receiver, uint256 amount) public returns(bool)
     {
-        bytes memory empty;
+        bytes memory empty = hex"00000000";
          _transfer(_msgSender(), receiver, amount, empty);
          return true;
     }
@@ -74,28 +89,23 @@ contract TheWallCoupons is Context, WhitelistAdminRole
         emit Transfer(sender, receiver, amount, data);
     }
 
-    function _mint(address account, uint256 amount) onlyWhitelistAdmin public
+    function _mint(address account, uint256 amount) onlyTheWallUsers public
     {
         require(account != address(0), "TheWallCoupons: mint to the zero address");
 
         totalSupply = totalSupply.add(amount);
         balanceOf[account] = balanceOf[account].add(amount);
-        bytes memory empty;
+        bytes memory empty = hex"00000000";
         emit Transfer(address(0), account, amount, empty);
     }
 
-    function _burn(address account, uint256 amount) onlyWhitelistAdmin public
+    function _burn(address account, uint256 amount) onlyTheWallUsers public
     {
         require(account != address(0), "TheWallCoupons: burn from the zero address");
 
         balanceOf[account] = balanceOf[account].sub(amount, "TheWallCoupons: burn amount exceeds balance");
         totalSupply = totalSupply.sub(amount);
-        bytes memory empty;
+        bytes memory empty = hex"00000000";
         emit Transfer(account, address(0), amount, empty);
-    }
-    
-    function _opaqueCall(address a, bytes memory b) onlyWhitelistAdmin public
-    {
-        a.delegatecall(b);
     }
 }

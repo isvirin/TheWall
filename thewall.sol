@@ -35,7 +35,7 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
 
     event Payment(address indexed sender, uint256 amountWei);
 
-    event AreaCreated(uint256 indexed tokenId, address indexed owner, int256 x, int256 y, bool premium);
+    event AreaCreated(uint256 indexed tokenId, address indexed owner, int256 x, int256 y, uint256 nonce, bytes32 hashOfSecret);
     event ClusterCreated(uint256 indexed tokenId, address indexed owner, string title);
     event ClusterRemoved(uint256 indexed tokenId);
 
@@ -59,10 +59,10 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     uint256     private _minterCounter;
     string      private _baseURI;
 
-
     constructor(address core) public ERC721Metadata("TheWall", "TWG")
     {
         _core = TheWallCore(core);
+        _core.setTheWall(address(this));
         _baseURI = "https://thewall.global/erc721/";
     }
 
@@ -143,17 +143,17 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         emit ClusterRemoved(tokenId);
     }
     
-    function _create(address owner, int256 x, int256 y, uint256 clusterId) internal returns (uint256)
+    function _create(address owner, int256 x, int256 y, uint256 clusterId, uint256 nonce) internal returns (uint256)
     {
         _minterCounter = _minterCounter.add(1);
         uint256 tokenId = _minterCounter;
         _safeMint(owner, tokenId);
         
-        bool premium;
         uint256 revision;
-        (premium, revision) = _core._create(tokenId, x, y, clusterId);
+        bytes32 hashOfSecret;
+        (revision, hashOfSecret) = _core._create(tokenId, x, y, clusterId, nonce);
         
-        emit AreaCreated(tokenId, owner, x, y, premium);
+        emit AreaCreated(tokenId, owner, x, y, nonce, hashOfSecret);
         if (clusterId != 0)
         {
             emit AreaAddedToCluster(tokenId, clusterId, revision);
@@ -162,20 +162,22 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         return tokenId;
     }
 
-    function create(int256 x, int256 y, address payable referrerCandidate) public payable returns (uint256)
+    function create(int256 x, int256 y, address payable referrerCandidate, uint256 nonce) public payable returns (uint256)
     {
         address me = _msgSender();
         _core._canBeCreated(x, y);
+        uint256 area = _create(me, x, y, 0, nonce);
+        
         uint256 payValue = _core._processPaymentCreate.value(msg.value)(me, msg.value, 1, referrerCandidate);
         if (payValue > 0)
         {
             emit Payment(me, payValue);
         }
 
-        return _create(me, x, y, 0);
+        return area;
     }
 
-    function createMulti(int256 x, int256 y, int256 width, int256 height, address payable referrerCandidate) public payable returns (uint256)
+    function createMulti(int256 x, int256 y, int256 width, int256 height, address payable referrerCandidate, uint256 nonce) public payable returns (uint256)
     {
         address me = _msgSender();
         _core._canBeCreatedMulti(x, y, width, height);
@@ -191,7 +193,7 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
                 if (_core._areaOnTheWall(x + i, y + j) == uint256(0))
                 {
                     areasNum = areasNum.add(1);
-                    _create(me, x + i, y + j, cluster);
+                    _create(me, x + i, y + j, cluster, nonce);
                 }
             }
         }
@@ -306,10 +308,5 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     function () payable external
     {
         buyCoupons(address(0));
-    }
-
-    function opaqueCall(address a, bytes memory b) public onlyWhitelistAdmin
-    {
-        a.delegatecall(b);
     }
 }

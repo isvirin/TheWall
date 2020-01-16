@@ -127,9 +127,4 @@ contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRo
             _beneficiaries[who].balance = balanceOf(who);
         }
     }
-
-    function opaqueCall(address a, bytes memory b) onlyWhitelistAdmin public
-    {
-        a.delegatecall(b);
-    }
 }

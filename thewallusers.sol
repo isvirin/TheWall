@@ -54,11 +54,7 @@ contract TheWallUsers is Context, WhitelistAdminRole
     constructor (address coupons) public
     {
         _coupons = TheWallCoupons(coupons);
-    }
-
-    function setCouponsContract(address coupons) public onlyWhitelistAdmin
-    {
-        _coupons = TheWallCoupons(coupons);
+        _coupons.setTheWallUsers(address(this));
     }
 
     function setNickname(string memory nickname) public
@@ -79,35 +75,29 @@ contract TheWallUsers is Context, WhitelistAdminRole
         setAvatar(avatar);
     }
     
-    function _useCoupons(address owner, uint256 count) internal returns(uint256)
+    function _useCoupons(address owner, uint256 count) internal returns(uint256 used)
     {
-        uint256 used;
-        if (_coupons != TheWallCoupons(0))
+        used = _coupons.balanceOf(owner);
+        if (count < used)
         {
-            used = _coupons.balanceOf(owner);
-            if (count < used)
-            {
-                used = count;
-            }
-            if (used > 0)
-            {
-                _coupons._burn(owner, used);
-                emit CouponsUsed(owner, used);
-            }
+            used = count;
         }
-        return used;
+        if (used > 0)
+        {
+            _coupons._burn(owner, used);
+            emit CouponsUsed(owner, used);
+        }
     }
 
     function giveCoupons(address owner, uint256 count) public onlyWhitelistAdmin
     {
-        require(_coupons != TheWallCoupons(0), "TheWallUsers: no contract for coupons found");
+        require(owner != address(0));
         _coupons._mint(owner, count);
         emit CouponsCreated(owner, count);
     }
     
     function giveCouponsMulti(address[] memory owners, uint256 count) public onlyWhitelistAdmin
     {
-        require(_coupons != TheWallCoupons(0), "TheWallUsers: no contract for coupons found");
         for(uint i = 0; i < owners.length; ++i)
         {
             _coupons._mint(owners[i], count);
