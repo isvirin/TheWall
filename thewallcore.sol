@@ -80,6 +80,7 @@ contract TheWallCore is WhitelistAdminRole, TheWallUsers
     struct Cluster
     {
         uint256[]  areas;
+        mapping (uint256 => uint256) areaToIndex;
         uint256    revision;
     }
 
@@ -266,6 +267,7 @@ contract TheWallCore is WhitelistAdminRole, TheWallUsers
             cluster.revision += 1;
             revision = cluster.revision;
             cluster.areas.push(tokenId);
+            cluster.areaToIndex[tokenId] = cluster.areas.length - 1;
         }
         
         return (revision, area.hashOfSecret);
@@ -416,6 +418,7 @@ contract TheWallCore is WhitelistAdminRole, TheWallUsers
         Cluster storage cluster = _clusters[clusterId];
         cluster.revision += 1;
         cluster.areas.push(areaId);
+        cluster.areaToIndex[areaId] = cluster.areas.length - 1;
         return cluster.revision;
     }
 
@@ -436,19 +439,14 @@ contract TheWallCore is WhitelistAdminRole, TheWallUsers
 
         Cluster storage cluster = _clusters[clusterId];
         cluster.revision += 1;
-        uint index = 0;
-        for(uint i = 0; i < cluster.areas.length; ++i)
-        {
-            if (cluster.areas[i] == areaId)
-            {
-                index = i;
-                break;
-            }
-        }
+        uint index = cluster.areaToIndex[areaId];
         if (index != cluster.areas.length - 1)
         {
-            cluster.areas[index] = cluster.areas[cluster.areas.length - 1];
+            uint256 movedAreaId = cluster.areas[cluster.areas.length - 1];
+            cluster.areaToIndex[movedAreaId] = index;
+            cluster.areas[index] = movedAreaId;
         }
+        delete cluster.areaToIndex[areaId];
         cluster.areas.length--;
         return cluster.revision;
     }
@@ -574,5 +572,10 @@ contract TheWallCore is WhitelistAdminRole, TheWallUsers
             giveCoupons(me, couponsAmount);
         }
         return payValue;
+    }
+    
+    function _clusterOf(uint256 tokenId) view public returns (uint256)
+    {
+        return _areas[tokenId].cluster;
     }
 }

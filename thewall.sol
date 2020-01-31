@@ -86,11 +86,6 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     {
         require(_isApprovedOrOwner(_msgSender(), tokenId));
         _core._canBeTransferred(tokenId);
-        uint256[] memory tokens = _core._areasInCluster(tokenId);
-        for(uint i = 0; i < tokens.length; ++i)
-        {
-            _transferFrom(from, to, tokens[i]);
-        }
         _transferFrom(from, to, tokenId);
         emit ItemTransferred(tokenId, from, to);
     }
@@ -99,11 +94,6 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     {
         require(_isApprovedOrOwner(_msgSender(), tokenId));
         _core._canBeTransferred(tokenId);
-        uint256[] memory tokens = _core._areasInCluster(tokenId);
-        for(uint i = 0; i < tokens.length; ++i)
-        {
-            _safeTransferFrom(from, to, tokens[i], data);
-        }
         _safeTransferFrom(from, to, tokenId, data);
         emit ItemTransferred(tokenId, from, to);
     }
@@ -138,6 +128,16 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     function removeCluster(uint256 tokenId) public
     {
         require(_isApprovedOrOwner(_msgSender(), tokenId));
+        uint256[] memory tokens = _core._areasInCluster(tokenId);
+        address clusterOwner = ownerOf(tokenId);
+        for(uint i = 0; i < tokens.length; ++i)
+        {
+            address oldOwner = ownerOf(tokens[i]);
+            if (oldOwner != clusterOwner)
+            {
+                _safeTransferFrom(oldOwner, clusterOwner, tokens[i], "");
+            }
+        }
         _core._removeCluster(tokenId);
         _burn(tokenId);
         emit ClusterRemoved(tokenId);
@@ -210,14 +210,9 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     function buy(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
         address me = _msgSender();
-        address payable tokenOwner = ownerOf(tokenId).toPayable();
+        address payable tokenOwner = actualOwnerOf(tokenId).toPayable();
         _core._buy.value(msg.value)(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
         emit Payment(me, msg.value);
-        uint256[] memory tokens = _core._areasInCluster(tokenId);
-        for(uint i = 0; i < tokens.length; ++i)
-        {
-            _safeTransferFrom(tokenOwner, me, tokens[i], "");
-        }
         _safeTransferFrom(tokenOwner, me, tokenId, "");
         emit ItemTransferred(tokenId, tokenOwner, me);
     }
@@ -225,7 +220,7 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     function rent(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
         address me = _msgSender();
-        address payable tokenOwner = ownerOf(tokenId).toPayable();
+        address payable tokenOwner = actualOwnerOf(tokenId).toPayable();
         uint256 rentDuration;
         rentDuration = _core._rent.value(msg.value)(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
         emit Payment(me, msg.value);
@@ -255,43 +250,48 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     
     function addToCluster(uint256 areaId, uint256 clusterId) public
     {
-        uint256 revision = _core._addToCluster(_msgSender(), ownerOf(areaId), ownerOf(clusterId), areaId, clusterId);
+        uint256 revision = _core._addToCluster(_msgSender(), actualOwnerOf(areaId), ownerOf(clusterId), areaId, clusterId);
         emit AreaAddedToCluster(areaId, clusterId, revision);
     }
 
     function removeFromCluster(uint256 areaId, uint256 clusterId) public
     {
-        uint256 revision = _core._removeFromCluster(_msgSender(), ownerOf(areaId), ownerOf(clusterId), areaId, clusterId);
+        address me = _msgSender();
+        uint256 revision = _core._removeFromCluster(me, actualOwnerOf(areaId), ownerOf(clusterId), areaId, clusterId);
+        if (ownerOf(areaId) != me)
+        {
+            _safeTransferFrom(ownerOf(areaId), me, areaId, "");
+        }
         emit AreaRemovedFromCluster(areaId, clusterId, revision);
     }
 
     function setImage(uint256 tokenId, bytes memory image) public
     {
-        _core._setImage(_msgSender(), ownerOf(tokenId), tokenId, image);
+        _core._setImage(_msgSender(), actualOwnerOf(tokenId), tokenId, image);
         emit AreaImageChanged(tokenId, image);
     }
 
     function setLink(uint256 tokenId, string memory link) public
     {
-        _core._setLink(_msgSender(), ownerOf(tokenId), tokenId, link);
+        _core._setLink(_msgSender(), actualOwnerOf(tokenId), tokenId, link);
         emit ItemLinkChanged(tokenId, link);
     }
 
     function setTags(uint256 tokenId, string memory tags) public
     {
-        _core._setTags(_msgSender(), ownerOf(tokenId), tokenId, tags);
+        _core._setTags(_msgSender(), actualOwnerOf(tokenId), tokenId, tags);
         emit ItemTagsChanged(tokenId, tags);
     }
 
     function setTitle(uint256 tokenId, string memory title) public
     {
-        _core._setTitle(_msgSender(), ownerOf(tokenId), tokenId, title);
+        _core._setTitle(_msgSender(), actualOwnerOf(tokenId), tokenId, title);
         emit ItemTitleChanged(tokenId, title);
     }
 
     function setContent(uint256 tokenId, bytes memory content) public
     {
-        _core._setContent(_msgSender(), ownerOf(tokenId), tokenId, content);
+        _core._setContent(_msgSender(), actualOwnerOf(tokenId), tokenId, content);
         emit ItemContentChanged(tokenId, content);
     }
     
@@ -308,5 +308,15 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     function () payable external
     {
         buyCoupons(address(0));
+    }
+    
+    function actualOwnerOf(uint256 tokenId) public view returns (address)
+    {
+        uint256 clusterId = _core._clusterOf(tokenId);
+        if (clusterId != 0)
+        {
+            tokenId = clusterId;
+        }
+        return ownerOf(tokenId);
     }
 }
