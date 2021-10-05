@@ -16,22 +16,22 @@ along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
 
 @author Ilya Svirin <is.svirin@gmail.com>
 */
+// SPDX-License-Identifier: GNU lesser General Public License
 
-pragma solidity ^0.5.5;
+pragma solidity ^0.8.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Context.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
 
 
-contract ERC223ReceivingContract
+abstract contract ERC223ReceivingContract
 {
-    function tokenFallback(address sender, uint amount, bytes memory data) public;
+    function tokenFallback(address sender, uint amount, bytes memory data) public virtual;
 }
 
 
-contract TheWallCoupons is Context, WhitelistAdminRole
+contract TheWallCoupons is Context
 {
     using SafeMath for uint256;
     using Address for address;

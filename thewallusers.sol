@@ -16,17 +16,17 @@ along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
 
 @author Ilya Svirin <is.svirin@gmail.com>
 */
+// SPDX-License-Identifier: GNU lesser General Public License
 
-pragma solidity ^0.5.5;
+pragma solidity ^0.8.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
 import "./thewallcoupons.sol";
 
 
-contract TheWallUsers is Context, WhitelistAdminRole
+contract TheWallUsers is Ownable
 {
     using SafeMath for uint256;
     using Address for address payable;
@@ -51,7 +51,7 @@ contract TheWallUsers is Context, WhitelistAdminRole
     event ReferrerChanged(address indexed me, address indexed referrer);
     event ReferralPayment(address indexed referrer, address indexed referral, uint256 amountWei);
 
-    constructor (address coupons) public
+    constructor (address coupons)
     {
         _coupons = TheWallCoupons(coupons);
         _coupons.setTheWallUsers(address(this));
@@ -89,20 +89,24 @@ contract TheWallUsers is Context, WhitelistAdminRole
         }
     }
 
-    function giveCoupons(address owner, uint256 count) public onlyWhitelistAdmin
+    function giveCoupons(address owner, uint256 count) public onlyOwner
+    {
+        _giveCoupons(owner, count);
+    }
+    
+    function giveCouponsMulti(address[] memory owners, uint256 count) public onlyOwner
+    {
+        for(uint i = 0; i < owners.length; ++i)
+        {
+            _giveCoupons(owners[i], count);
+        }
+    }
+    
+    function _giveCoupons(address owner, uint256 count) internal
     {
         require(owner != address(0));
         _coupons._mint(owner, count);
         emit CouponsCreated(owner, count);
-    }
-    
-    function giveCouponsMulti(address[] memory owners, uint256 count) public onlyWhitelistAdmin
-    {
-        for(uint i = 0; i < owners.length; ++i)
-        {
-            _coupons._mint(owners[i], count);
-            emit CouponsCreated(owners[i], count);
-        }
     }
     
     function _processRef(address me, address payable referrerCandidate, uint256 amountWei) internal returns(uint256)

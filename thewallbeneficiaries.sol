@@ -16,18 +16,16 @@ along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
 
 @author Ilya Svirin <is.svirin@gmail.com>
 */
+// SPDX-License-Identifier: GNU lesser General Public License
 
-pragma solidity ^0.5.5;
+pragma solidity ^0.8.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC20/ERC20Detailed.sol";
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 
 
-contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRole
+contract TheWallBeneficiaries is ERC20
 {
     using SafeMath for uint256;
     using Address for address payable;
@@ -49,23 +47,28 @@ contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRo
     mapping(address => Beneficiary) private _beneficiaries;
 
 
-    constructor () public ERC20Detailed("TheWallBeneficiaries", "TWS", 0)
+    constructor () ERC20("TheWallBeneficiaries", "TWS")
     {
         _mint(_msgSender(), 21000000);
     }
     
-    function () external payable
+    receive() external payable
     {
     }
     
-    function transfer(address recipient, uint256 amount) public returns (bool)
+    function decimals() public view virtual override returns (uint8)
+    {
+        return 0;
+    }
+    
+    function transfer(address recipient, uint256 amount) public override returns (bool)
     {
         beforeBalanceChanges(recipient);
         beforeBalanceChanges(_msgSender());
         return super.transfer(recipient, amount);
     }
 
-    function transferFrom(address sender, address recipient, uint256 amount) public returns (bool)
+    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool)
     {
         beforeBalanceChanges(sender);
         beforeBalanceChanges(recipient);
@@ -102,9 +105,9 @@ contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRo
             }
             else
             {
-                _beneficiaries[_msgSender()].rewardWithdrawTime = now;
+                _beneficiaries[_msgSender()].rewardWithdrawTime = block.timestamp;
             }
-            _msgSender().sendValue(value);
+            payable(_msgSender()).sendValue(value);
             emit WithdrawReward(_msgSender(), value);
         }
     }
@@ -112,8 +115,8 @@ contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRo
     function divideUpReward() public
     {
         require(balanceOf(_msgSender()) > 0, "TheWallBeneficiaries: beneficiary only can call devideUpReward");
-        require(_lastDivideRewardTime + 30 days < now, "TheWallBeneficiaries: too early call");
-        _lastDivideRewardTime = now;
+        require(_lastDivideRewardTime + 30 days < block.timestamp, "TheWallBeneficiaries: too early call");
+        _lastDivideRewardTime = block.timestamp;
         _totalReward = address(this).balance;
         _restReward = _totalReward;
         emit DivideUpReward(_msgSender(), _totalReward);
@@ -123,7 +126,7 @@ contract TheWallBeneficiaries is Context, ERC20, ERC20Detailed, WhitelistAdminRo
     {
         if (_beneficiaries[who].balanceUpdateTime <= _lastDivideRewardTime)
         {
-            _beneficiaries[who].balanceUpdateTime = now;
+            _beneficiaries[who].balanceUpdateTime = block.timestamp;
             _beneficiaries[who].balance = balanceOf(who);
         }
     }

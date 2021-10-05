@@ -16,27 +16,24 @@ along with the TheWall Contract. If not, see <http://www.gnu.org/licenses/>.
 
 @author Ilya Svirin <is.svirin@gmail.com>
 */
+// SPDX-License-Identifier: GNU lesser General Public License
 
-pragma solidity ^0.5.5;
+pragma solidity ^0.8.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721Full.sol";
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721Metadata.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/roles/WhitelistAdminRole.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/GSN/Context.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/math/SafeMath.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/drafts/Strings.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/math/SafeMath.sol";
 import "./thewallcore.sol";
 
 
-contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
+contract TheWall is ERC721, Ownable, IERC721Receiver
 {
-    using Strings for uint256;
+    using SafeMath for uint256;
 
     event Payment(address indexed sender, uint256 amountWei);
 
-    event AreaCreated(uint256 indexed tokenId, address indexed owner, int256 x, int256 y, uint256 nonce, bytes32 hashOfSecret);
-    event ClusterCreated(uint256 indexed tokenId, address indexed owner, string title);
+    event AreaCreated(uint256 indexed tokenId, address indexed owner, int256 x, int256 y, uint256 nonce, bytes32 hashOfSecret, bytes content);
+    event ClusterCreated(uint256 indexed tokenId, address indexed owner, bytes content);
     event ClusterRemoved(uint256 indexed tokenId);
 
     event AreaAddedToCluster(uint256 indexed areaTokenId, uint256 indexed clusterTokenId, uint256 revision);
@@ -52,49 +49,78 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
     event ItemForRent(uint256 indexed tokenId, uint256 priceWei, uint256 durationSeconds);
     event ItemForSale(uint256 indexed tokenId, uint256 priceWei);
     event ItemRented(uint256 indexed tokenId, address indexed tenant, uint256 finishTime);
+    event ItemBought(uint256 indexed tokenId, address indexed buyer);
     event ItemReset(uint256 indexed tokenId);
     event ItemRentFinished(uint256 indexed tokenId);
+    
+    event ReceivedExternalNFT(uint256 indexed externalTokenId, address indexed contractAddress, address indexed owner, string tokenURI);
+    event WithdrawExternalNFT(uint256 indexed externalTokenId, address indexed contractAddress, address indexed to);
+    event AttachedExternalNFT(uint256 indexed externalTokenId, address indexed contractAddress, uint256 areaId);
+    event DetachedExternalNFT(uint256 indexed externalTokenId, address indexed contractAddress);
 
     TheWallCore private _core;
     uint256     private _minterCounter;
-    string      private _baseURI;
+    uint256     private _externalTokensCounter;
+    string      private _base;
 
-    constructor(address core) public ERC721Metadata("TheWall", "TWG")
+    struct ExternalToken
+    {
+        address contractAddress;
+        uint256 externalTokenId;
+        address owner;
+        uint256 attachedAreaId;
+    }
+
+    // internalId => ExternalToken
+    mapping (uint256 => ExternalToken) private _externalTokens;
+
+    // contractAddress => externalTokenId => internalId
+    mapping (address => mapping (uint256 => uint256)) private _externalTokensId;
+    
+    // area => internalId
+    mapping (uint256 => uint256) private _attachedExternalTokens;
+
+    constructor(address core) ERC721("TheWall", "TWG")
     {
         _core = TheWallCore(core);
         _core.setTheWall(address(this));
-        _baseURI = "https://thewall.global/erc721/";
+        setBaseURI("https://thewall.global/erc721/");
     }
 
-    function setBaseURI(string memory baseURI) public onlyWhitelistAdmin
+    function setBaseURI(string memory baseURI) public onlyOwner
     {
-        _baseURI = baseURI;
+        _base = baseURI;
     }
     
-    function tokenURI(uint256 tokenId) external view returns (string memory)
+    function _baseURI() internal view override returns (string memory)
     {
-        require(_exists(tokenId));
-        return string(abi.encodePacked(_baseURI, tokenId.fromUint256()));
+        return _base;
     }
-
-    function safeTransferFrom(address from, address to, uint256 tokenId) public
+    
+    function safeTransferFrom(address from, address to, uint256 tokenId) public override
     {
         safeTransferFrom(from, to, tokenId, "");
     }
 
-    function transferFrom(address from, address to, uint256 tokenId) public
+    function transferFrom(address from, address to, uint256 tokenId) public override
     {
         require(_isApprovedOrOwner(_msgSender(), tokenId));
         _core._canBeTransferred(tokenId);
-        _transferFrom(from, to, tokenId);
+        _transfer(from, to, tokenId);
         emit ItemTransferred(tokenId, from, to);
     }
 
-    function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory data) public
+    function safeTransferFromKeepingControl(address from, address to, uint256 tokenId) public onlyOwner
+    {
+        safeTransferFrom(from, to, tokenId);
+        _approve(from, tokenId);
+    }
+
+    function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory data) public override
     {
         require(_isApprovedOrOwner(_msgSender(), tokenId));
         _core._canBeTransferred(tokenId);
-        _safeTransferFrom(from, to, tokenId, data);
+        _safeTransfer(from, to, tokenId, data);
         emit ItemTransferred(tokenId, from, to);
     }
 
@@ -112,16 +138,16 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         emit ItemForRent(tokenId, priceWei, durationSeconds);
     }
 
-    function createCluster(string memory title) public returns (uint256)
+    function createCluster(bytes memory content) public returns (uint256)
     {
         address me = _msgSender();
 
         _minterCounter = _minterCounter.add(1);
         uint256 tokenId = _minterCounter;
         _safeMint(me, tokenId);
-        _core._createCluster(tokenId, title);
+        _core._createCluster(tokenId, content);
 
-        emit ClusterCreated(tokenId, me, title);
+        emit ClusterCreated(tokenId, me, content);
         return tokenId;
     }
 
@@ -135,7 +161,8 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
             address oldOwner = ownerOf(tokens[i]);
             if (oldOwner != clusterOwner)
             {
-                _safeTransferFrom(oldOwner, clusterOwner, tokens[i], "");
+                uint256 token = tokens[i];
+                _safeTransfer(oldOwner, clusterOwner, token, "");
             }
         }
         _core._removeCluster(tokenId);
@@ -143,7 +170,7 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         emit ClusterRemoved(tokenId);
     }
     
-    function _create(address owner, int256 x, int256 y, uint256 clusterId, uint256 nonce) internal returns (uint256)
+    function _create(address owner, int256 x, int256 y, uint256 clusterId, uint256 nonce, bytes memory content) internal returns (uint256)
     {
         _minterCounter = _minterCounter.add(1);
         uint256 tokenId = _minterCounter;
@@ -151,9 +178,9 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         
         uint256 revision;
         bytes32 hashOfSecret;
-        (revision, hashOfSecret) = _core._create(tokenId, x, y, clusterId, nonce);
+        (revision, hashOfSecret) = _core._create(tokenId, x, y, clusterId, nonce, content);
         
-        emit AreaCreated(tokenId, owner, x, y, nonce, hashOfSecret);
+        emit AreaCreated(tokenId, owner, x, y, nonce, hashOfSecret, content);
         if (clusterId != 0)
         {
             emit AreaAddedToCluster(tokenId, clusterId, revision);
@@ -162,13 +189,13 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         return tokenId;
     }
 
-    function create(int256 x, int256 y, address payable referrerCandidate, uint256 nonce) public payable returns (uint256)
+    function create(int256 x, int256 y, uint256 clusterId, address payable referrerCandidate, uint256 nonce, bytes memory content) public payable returns (uint256)
     {
         address me = _msgSender();
         _core._canBeCreated(x, y);
-        uint256 area = _create(me, x, y, 0, nonce);
+        uint256 area = _create(me, x, y, clusterId, nonce, content);
         
-        uint256 payValue = _core._processPaymentCreate.value(msg.value)(me, msg.value, 1, referrerCandidate);
+        uint256 payValue = _core._processPaymentCreate{value: msg.value}(me, msg.value, 1, referrerCandidate);
         if (payValue > 0)
         {
             emit Payment(me, payValue);
@@ -179,13 +206,26 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
 
     function createMulti(int256 x, int256 y, int256 width, int256 height, address payable referrerCandidate, uint256 nonce) public payable returns (uint256)
     {
+        bytes memory emptyContent;
+        uint256 cluster =  createCluster(emptyContent);
+        _createMulti(x, y, width, height, cluster, referrerCandidate, nonce);
+        return cluster;
+    }
+
+    function createMultiNoCluster(int256 x, int256 y, int256 width, int256 height, address payable referrerCandidate, uint256 nonce) public payable
+    {
+        _createMulti(x, y, width, height, 0, referrerCandidate, nonce);
+    }
+
+    function _createMulti(int256 x, int256 y, int256 width, int256 height, uint256 cluster, address payable referrerCandidate, uint256 nonce) internal
+    {
         address me = _msgSender();
         _core._canBeCreatedMulti(x, y, width, height);
 
-        uint256 cluster = createCluster("");
         uint256 areasNum = 0;
         int256 i;
         int256 j;
+        bytes memory emptyContent;
         for(i = 0; i < width; ++i)
         {
             for(j = 0; j < height; ++j)
@@ -193,36 +233,36 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
                 if (_core._areaOnTheWall(x + i, y + j) == uint256(0))
                 {
                     areasNum = areasNum.add(1);
-                    _create(me, x + i, y + j, cluster, nonce);
+                    _create(me, x + i, y + j, cluster, nonce, emptyContent);
                 }
             }
         }
 
-        uint256 payValue = _core._processPaymentCreate.value(msg.value)(me, msg.value, areasNum, referrerCandidate);
+        uint256 payValue = _core._processPaymentCreate{value: msg.value}(me, msg.value, areasNum, referrerCandidate);
         if (payValue > 0)
         {
             emit Payment(me, payValue);
         }
-
-        return cluster;
     }
 
     function buy(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
         address me = _msgSender();
-        address payable tokenOwner = actualOwnerOf(tokenId).toPayable();
-        _core._buy.value(msg.value)(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
+        address payable tokenOwner = payable(actualOwnerOf(tokenId));
+        _core._buy{value: msg.value}(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
         emit Payment(me, msg.value);
-        _safeTransferFrom(tokenOwner, me, tokenId, "");
+        _safeTransfer(tokenOwner, me, tokenId, "");
+        emit ItemBought(tokenId, me);
         emit ItemTransferred(tokenId, tokenOwner, me);
+        emit ItemReset(tokenId);
     }
 
     function rent(uint256 tokenId, uint256 revision, address payable referrerCandidate) payable public
     {
         address me = _msgSender();
-        address payable tokenOwner = actualOwnerOf(tokenId).toPayable();
+        address payable tokenOwner = payable(actualOwnerOf(tokenId));
         uint256 rentDuration;
-        rentDuration = _core._rent.value(msg.value)(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
+        rentDuration = _core._rent{value: msg.value}(tokenOwner, tokenId, me, msg.value, revision, referrerCandidate);
         emit Payment(me, msg.value);
         emit ItemRented(tokenId, me, rentDuration);
     }
@@ -260,9 +300,26 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         uint256 revision = _core._removeFromCluster(me, actualOwnerOf(areaId), ownerOf(clusterId), areaId, clusterId);
         if (ownerOf(areaId) != me)
         {
-            _safeTransferFrom(ownerOf(areaId), me, areaId, "");
+            _safeTransfer(ownerOf(areaId), me, areaId, "");
         }
         emit AreaRemovedFromCluster(areaId, clusterId, revision);
+    }
+
+    function setAttributesComplete(uint256 tokenId, bytes memory image, string memory link, string memory tags, string memory title) public
+    {
+        _core._setAttributesComplete(_msgSender(), actualOwnerOf(tokenId), tokenId, image, link, tags, title);
+        emit AreaImageChanged(tokenId, image);
+        emit ItemLinkChanged(tokenId, link);
+        emit ItemTagsChanged(tokenId, tags);
+        emit ItemTitleChanged(tokenId, title);
+    }
+
+    function setAttributes(uint256 tokenId, string memory link, string memory tags, string memory title) public
+    {
+        _core._setAttributes(_msgSender(), actualOwnerOf(tokenId), tokenId, link, tags, title);
+        emit ItemLinkChanged(tokenId, link);
+        emit ItemTagsChanged(tokenId, tags);
+        emit ItemTitleChanged(tokenId, title);
     }
 
     function setImage(uint256 tokenId, bytes memory image) public
@@ -294,20 +351,32 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
         _core._setContent(_msgSender(), actualOwnerOf(tokenId), tokenId, content);
         emit ItemContentChanged(tokenId, content);
     }
+
+    function setContentMulti(uint256[] memory tokens, bytes[] memory contents) public
+    {
+        require(tokens.length == contents.length, "TheWall: length must be equal");
+        for(uint i = 0; i < tokens.length; ++i)
+        {
+            uint256 tokenId = tokens[i];
+            bytes memory content = contents[i];
+            _core._setContent(_msgSender(), actualOwnerOf(tokenId), tokenId, content);
+            emit ItemContentChanged(tokenId, content);
+        }
+    }
     
     function buyCoupons(address payable referrerCandidate) payable public
     {
         address me = _msgSender();
-        uint256 payValue = _core._buyCoupons.value(msg.value)(me, msg.value, referrerCandidate);
+        uint256 payValue = _core._buyCoupons{value: msg.value}(me, msg.value, referrerCandidate);
         if (payValue > 0)
         {
             emit Payment(me, payValue);
         }
     }
     
-    function () payable external
+    receive () payable external
     {
-        buyCoupons(address(0));
+        buyCoupons(payable(address(0)));
     }
     
     function actualOwnerOf(uint256 tokenId) public view returns (address)
@@ -318,5 +387,93 @@ contract TheWall is ERC721, ERC721Metadata, WhitelistAdminRole
             tokenId = clusterId;
         }
         return ownerOf(tokenId);
+    }
+    
+    function onERC721Received(address operator, address /*from*/, uint256 tokenId, bytes calldata /*data*/) public override returns (bytes4)
+    {
+        ExternalToken memory nft;
+        nft.contractAddress = _msgSender();
+        nft.owner = operator;
+        nft.externalTokenId = tokenId;
+        nft.attachedAreaId = 0;
+        
+        require(_externalTokensId[nft.contractAddress][tokenId] == 0, "TheWall: External NFT already exists");
+
+        _externalTokensCounter = _externalTokensCounter.add(1);
+        uint256 internalId = _externalTokensCounter;
+        _externalTokens[internalId] = nft;
+        _externalTokensId[nft.contractAddress][tokenId] = internalId;
+
+        string memory uri = "";
+        if (IERC165(nft.contractAddress).supportsInterface(type(IERC721Metadata).interfaceId))
+        {
+            uri = IERC721Metadata(nft.contractAddress).tokenURI(tokenId);
+        }
+        emit ReceivedExternalNFT(tokenId, nft.contractAddress, nft.owner, uri);
+        return this.onERC721Received.selector;
+    }
+    
+    function withdrawExternalNFT(uint256 externalTokenId, address contractAddress, address to) public
+    {
+        uint256 internalId = _externalTokensId[contractAddress][externalTokenId];
+        require(internalId != 0, "TheWall: No external token found");
+        ExternalToken storage nft = _externalTokens[internalId];
+        if (nft.attachedAreaId != 0)
+        {
+            _core._isOrdinaryArea(nft.attachedAreaId);
+            require(actualOwnerOf(nft.attachedAreaId) == _msgSender(), "TheWall: Permission denied");
+            delete _attachedExternalTokens[nft.attachedAreaId];
+        }
+        else
+        {
+            require(nft.owner == _msgSender(), "TheWall: Permission denied");
+        }
+        delete _externalTokens[internalId];
+        delete _externalTokensId[contractAddress][externalTokenId];
+        IERC721(contractAddress).safeTransferFrom(address(this), to, externalTokenId);
+        emit WithdrawExternalNFT(externalTokenId, contractAddress, to);
+    }
+    
+    function ownerWithdrawExternalNFT(uint256 externalTokenId, address contractAddress, address to) public onlyOwner
+    {
+        uint256 internalId = _externalTokensId[contractAddress][externalTokenId];
+        require(internalId == 0 || _externalTokens[internalId].owner == address(this), "TheWall: External token has owner");
+        IERC721(contractAddress).safeTransferFrom(address(this), to, externalTokenId);
+    }
+
+    function attachExternalNFT(uint256 externalTokenId, address contractAddress, uint256 areaId) public
+    {
+        _core._isOrdinaryArea(areaId);
+        uint256 internalId = _attachedExternalTokens[areaId];
+        if (internalId != 0)
+        {
+            ExternalToken storage pnft = _externalTokens[internalId];
+            pnft.owner = actualOwnerOf(pnft.attachedAreaId);
+            delete pnft.attachedAreaId;
+            emit DetachedExternalNFT(pnft.externalTokenId, pnft.contractAddress);
+        }
+        internalId = _externalTokensId[contractAddress][externalTokenId];
+        require(internalId != 0, "TheWall: No external token found");
+        ExternalToken storage nft = _externalTokens[internalId];
+        require(nft.attachedAreaId == 0, "TheWall: Already attached");
+        require(nft.owner == _msgSender(), "TheWall: Permission denied");
+        require(actualOwnerOf(areaId) == _msgSender(), "TheWall: Not owner of area");
+        _attachedExternalTokens[areaId] = internalId;
+        nft.attachedAreaId = areaId;
+        emit AttachedExternalNFT(externalTokenId, contractAddress, areaId);
+    }
+
+    function detachExternalNFT(uint256 externalTokenId, address contractAddress) public
+    {
+        uint256 internalId = _externalTokensId[contractAddress][externalTokenId];
+        require(internalId != 0, "TheWall: No external token found");
+        ExternalToken storage nft = _externalTokens[internalId];
+        require(nft.attachedAreaId != 0, "TheWall: No attached area");
+        nft.owner = actualOwnerOf(nft.attachedAreaId);
+        require(nft.owner == _msgSender(), "TheWall: Permission denied");
+        _core._isOrdinaryArea(nft.attachedAreaId);
+        delete _attachedExternalTokens[nft.attachedAreaId];
+        delete nft.attachedAreaId;
+        emit DetachedExternalNFT(externalTokenId, contractAddress);
     }
 }
